@@ -1,0 +1,10 @@
+name: IMLO-Coursework
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy
+  - torchvision
+  - pytorch>=2.6.0
+  - cudatoolkit=none # CPU only 
