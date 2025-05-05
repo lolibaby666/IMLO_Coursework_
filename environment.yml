@@ -7,4 +7,5 @@ dependencies:
   - numpy
   - torchvision
   - pytorch>=2.6.0
-  - cudatoolkit=none # CPU only 
+  - matplotlib
+  - tqdm
