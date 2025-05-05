@@ -17,7 +17,9 @@ torch.manual_seed(seed)
 
 # Step 1: Data Preprocessing
 transform = transforms.Compose([
-    transforms.ToTensor()
+    transforms.ToTensor(),
+    transforms.RandomHorizontalFlip(),  # Randomly flip the image horizontally
+    transforms.RandomRotation(15)      # Random rotation up to 15 degrees
 ])
 
 # Load CIFAR-10 training and validation datasets
