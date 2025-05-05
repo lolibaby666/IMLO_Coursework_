@@ -110,7 +110,7 @@ def train(model, trainloader, validloader, criterion, optimizer, scheduler, epoc
     return train_losses, val_losses, train_accuracies, val_accuracies
 
 # Step 6: Train the Model
-train_losses, val_losses, train_accuracies, val_accuracies = train(model, trainloader, validloader, criterion, optimizer, scheduler, epochs=2)
+train_losses, val_losses, train_accuracies, val_accuracies = train(model, trainloader, validloader, criterion, optimizer, scheduler, epochs=100)
 
 # Step 7: Save the model after training
 model_save_path = './vgg16_cifar10.pth'
