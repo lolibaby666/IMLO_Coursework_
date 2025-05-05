@@ -3,19 +3,23 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-from vgg16_model import VGG16  # Assuming this script contains the VGG16 class
+from vgg16_model import VGG16
 import matplotlib.pyplot as plt
-from tqdm import tqdm  # Importing tqdm for progress bar
+from tqdm import tqdm
+import random
+import numpy as np
+
+# Set seeds for reproducibility
+seed = 42
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
 
 # Step 1: Data Preprocessing
-transform = transforms.Compose([
-    transforms.ToTensor()
-])
+transform = transforms.Compose([transforms.ToTensor()])
 
 # Load CIFAR-10 training and validation datasets
 data_root = './data'
-
-# Load the full CIFAR-10 dataset
 trainset = datasets.CIFAR10(root=data_root, train=True, download=True, transform=transform)
 
 # Split the training set into training and validation sets (90% for training, 10% for validation)
@@ -25,7 +29,7 @@ trainset, validset = torch.utils.data.random_split(trainset, [45000, 5000])
 trainloader = DataLoader(trainset, batch_size=128, shuffle=True, num_workers=4)
 validloader = DataLoader(validset, batch_size=128, shuffle=False, num_workers=4)
 
-# Step 2: Model Initialization (Using VGG16 from the other script)
+# Step 2: Model Initialization (Using VGG16)
 model = VGG16(weight_decay=0.0001)
 
 # Step 3: Loss Function and Optimizer
@@ -138,7 +142,7 @@ plt.legend()
 plt.tight_layout()
 
 # Save the entire figure
-plt.savefig('training_validation_plots.png', dpi=300)  # You can change the file format if you like (e.g., .jpg, .svg)
+plt.savefig('training_validation_plots.png', dpi=300)
 plt.show()
 
 
