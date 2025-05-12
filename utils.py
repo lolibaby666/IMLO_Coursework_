@@ -56,7 +56,15 @@ def get_train_val_loader(batch_size=128):
 
 def get_model(name, activation_fn=nn.ReLU(), weight_decay=0.0001):
     """
-    Return model by name. Supports 'vgg16' and 'resnet'.
+    Create and return a model instance.
+
+    Args:
+        name (str): Model name ('vgg16' or 'resnet').
+        activation_fn (type): Activation function class, e.g., nn.ReLU.
+        weight_decay (float): Weight decay for regularization (used in VGG16).
+
+    Returns:
+        nn.Module: Instantiated model.
     """
     if name == "vgg16":
         return VGG16(activation_fn=activation_fn, weight_decay=weight_decay)

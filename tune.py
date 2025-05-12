@@ -96,7 +96,7 @@ def main():
                             # Train and evaluate
                             best_acc, duration, stop_epoch = train_and_evaluate(
                                 model, trainloader, valloader, criterion, optimizer, device,
-                                epochs=100, patience=10
+                                epochs=30, patience=5
                             )
 
                             print(f"Done: Val Acc = {best_acc:.2f}%, Stopped at epoch {stop_epoch}, Time = {round(duration, 2)}s")
