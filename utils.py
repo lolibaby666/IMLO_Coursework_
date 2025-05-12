@@ -7,7 +7,7 @@ from vgg16_model import VGG16
 from resnet_model import ResNet
 import random
 import numpy as np
-from torch.utils.data import Subset
+from losses import FocalLoss
 
 def set_seed(seed=42):
     """Set seeds for reproducibility."""
@@ -84,9 +84,7 @@ def get_loss(loss_name):
     """
     if loss_name == "cross_entropy":
         return nn.CrossEntropyLoss()
-    elif loss_name == "mse":
-        return nn.MSELoss()
-    elif loss_name == "nll":
-        return nn.NLLLoss()
+    elif loss_name == "focal":
+        return FocalLoss(gamma=2.0)
     else:
         raise ValueError(f"Unknown loss function: {loss_name}")

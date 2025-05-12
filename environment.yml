@@ -6,6 +6,8 @@ dependencies:
   - python=3.10
   - numpy
   - torchvision
-  - pytorch>=2.6.0
+  - pytorch[version='>=2.6.0']
   - matplotlib
   - tqdm
+  - pip:
+      - pandas==2.2.3

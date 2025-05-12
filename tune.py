@@ -1,90 +1,26 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
-from torchvision import datasets, transforms, models
-from vgg16_model import VGG16
+import time
+import pandas as pd
 from tqdm import tqdm
-import random
-import numpy as np
+from utils import (
+    set_seed, get_device, get_train_val_loader,
+    get_model, get_optimizer, get_loss
+)
 
-# ----------------------- #
-#       UTILITIES         #
-# ----------------------- #
-
-def set_seed(seed=42):
-    """Sets the random seed for reproducibility."""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-def get_device():
-    """Force CPU usage only."""
-    return torch.device("cpu")
-
-def get_dataloaders(batch_size=128):
-    """Prepares and returns training and validation dataloaders with data augmentation."""
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(15),
-    ])
-    data_root = './data'
-    dataset = datasets.CIFAR10(root=data_root, train=True, download=True, transform=transform)
-    trainset, valset = random_split(dataset, [45000, 5000])
-    trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=0)
-    valloader = DataLoader(valset, batch_size=batch_size, shuffle=False, num_workers=0)
-    return trainloader, valloader
-
-# ----------------------- #
-#   MODEL + OPT HELPERS   #
-# ----------------------- #
-
-def get_model(name, activation_fn, weight_decay=0.0001):
+def train_and_evaluate(model, trainloader, valloader, criterion, optimizer, device, epochs=1, patience=20):
     """
-    Returns a model instance by name.
-    Supports 'vgg16' and 'resnet18'.
-    """
-    if name == "vgg16":
-        return VGG16(activation_fn=activation_fn, weight_decay=weight_decay)
-    elif name == "resnet18":
-        model = models.resnet18(pretrained=False, num_classes=10)
-        return model
-    else:
-        raise ValueError(f"Unknown model: {name}")
-
-def get_optimizer(name, parameters, lr):
-    """
-    Returns an optimizer instance given name and parameters.
-    """
-    if name == "adam":
-        return optim.Adam(parameters, lr=lr)
-    elif name == "sgd":
-        return optim.SGD(parameters, lr=lr, momentum=0.9)
-    else:
-        raise ValueError(f"Unknown optimizer: {name}")
-
-def get_loss(name):
-    """
-    Returns the loss function by name.
-    """
-    if name == "cross_entropy":
-        return nn.CrossEntropyLoss()
-    elif name == "mse":
-        return nn.MSELoss()
-    else:
-        raise ValueError(f"Unknown loss function: {name}")
-
-# ----------------------- #
-#     TRAINING LOOP       #
-# ----------------------- #
-
-def train_and_evaluate(model, trainloader, valloader, criterion, optimizer, device, epochs=5):
-    """
-    Trains the model and evaluates on the validation set.
-    Returns final validation accuracy.
+    Trains the model with early stopping and returns:
+    - Best validation accuracy
+    - Time taken
+    - Epoch at which training stopped
     """
     model.to(device)
+    best_acc = 0.0
+    best_epoch = 0
+    no_improve_count = 0
+    start_time = time.time()
+
     for epoch in range(epochs):
         model.train()
         for inputs, labels in tqdm(trainloader, desc=f"Epoch {epoch+1}/{epochs}", leave=False):
@@ -96,6 +32,7 @@ def train_and_evaluate(model, trainloader, valloader, criterion, optimizer, devi
             loss.backward()
             optimizer.step()
 
+        # Evaluate on validation set
         model.eval()
         correct = 0
         total = 0
@@ -107,57 +44,86 @@ def train_and_evaluate(model, trainloader, valloader, criterion, optimizer, devi
                 correct += (preds == labels).sum().item()
                 total += labels.size(0)
 
-    val_accuracy = 100 * correct / total
-    return val_accuracy
+        val_acc = 100 * correct / total
 
-# ----------------------- #
-#     MAIN TUNING LOOP    #
-# ----------------------- #
+        # Early stopping logic
+        if val_acc > best_acc:
+            best_acc = val_acc
+            best_epoch = epoch + 1
+            no_improve_count = 0
+        else:
+            no_improve_count += 1
+
+        if no_improve_count >= patience:
+            print(f"Early stopping at epoch {epoch+1}")
+            break
+
+    duration = time.time() - start_time
+    return best_acc, duration, best_epoch
+
 
 def main():
     set_seed()
     device = get_device()
-    print(f"Using device: {device}")
-    trainloader, valloader = get_dataloaders()
 
-    # Define hyperparameter space
-    model_names = ["vgg16", "resnet18"]
-    optimizers = ["adam", "sgd"]
-    losses = ["cross_entropy"]
-    lrs = [0.001, 0.0005]
+    # Define hyperparameter search space
+    model_names = ["vgg16", "resnet"]
     activations = {
         "relu": nn.ReLU(),
         "leaky_relu": nn.LeakyReLU()
     }
+    optimizers = ["adam", "sgd", "adamw"]
+    losses = ["cross_entropy","focal"]
+    lrs = [0.001, 0.0005]
+    batch_sizes = [64, 128]
 
-    # Start grid search
     results = []
-    for model_name in model_names:
-        for act_name, act_fn in activations.items():
-            for loss_name in losses:
-                for opt_name in optimizers:
-                    for lr in lrs:
-                        print(f"\nTesting: Model={model_name}, Act={act_name}, Loss={loss_name}, Optim={opt_name}, LR={lr}")
-                        model = get_model(model_name, act_fn)
-                        model.to(device)
-                        criterion = get_loss(loss_name)
-                        optimizer = get_optimizer(opt_name, model.parameters(), lr)
-                        acc = train_and_evaluate(model, trainloader, valloader, criterion, optimizer, device)
-                        print(f"Val Accuracy: {acc:.2f}%")
-                        results.append({
-                            "model": model_name,
-                            "activation": act_name,
-                            "loss": loss_name,
-                            "optimizer": opt_name,
-                            "lr": lr,
-                            "val_accuracy": acc
-                        })
 
-    # Print top results
-    print("\nTop Configurations:")
+    # Loop through all combinations
+    for batch_size in batch_sizes:
+        trainloader, valloader = get_train_val_loader(batch_size=batch_size)
+        for model_name in model_names:
+            for act_name, act_fn in activations.items():
+                for optimizer_name in optimizers:
+                    for loss_name in losses:
+                        for lr in lrs:
+                            print(f"\n▶ Testing: Model={model_name}, Act={act_name}, Optim={optimizer_name}, "
+                                  f"Loss={loss_name}, LR={lr}, Batch={batch_size}")
+                            model = get_model(model_name, activation_fn=act_fn)
+                            criterion = get_loss(loss_name)
+                            optimizer = get_optimizer(optimizer_name, model.parameters(), lr)
+
+                            # Train and evaluate
+                            best_acc, duration, stop_epoch = train_and_evaluate(
+                                model, trainloader, valloader, criterion, optimizer, device,
+                                epochs=100, patience=10
+                            )
+
+                            print(f"Done: Val Acc = {best_acc:.2f}%, Stopped at epoch {stop_epoch}, Time = {round(duration, 2)}s")
+
+                            # Record results
+                            results.append({
+                                "model": model_name,
+                                "activation": act_name,
+                                "optimizer": optimizer_name,
+                                "loss": loss_name,
+                                "lr": lr,
+                                "batch_size": batch_size,
+                                "val_accuracy": best_acc,
+                                "stop_epoch": stop_epoch,
+                                "duration_sec": round(duration, 2)
+                            })
+
+    # Sort and show top results
     results.sort(key=lambda x: x["val_accuracy"], reverse=True)
+    print("\n Top Configurations:")
     for r in results[:5]:
         print(r)
+
+    # Save to CSV
+    df = pd.DataFrame(results)
+    df.to_csv("tuning_results.csv", index=False)
+    print("\n Saved all results to tuning_results.csv")
 
 if __name__ == "__main__":
     main()
