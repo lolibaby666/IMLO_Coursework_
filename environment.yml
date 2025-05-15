@@ -1,13 +1,14 @@
 name: IMLO-Coursework
 channels:
+  - pytorch
   - defaults
   - conda-forge
 dependencies:
   - python=3.10
   - numpy
-  - torchvision
-  - pytorch[version='>=2.6.0']
   - matplotlib
   - tqdm
-  - pip:
-      - pandas==2.2.3
+  - pandas=2.2.2           
+  - scikit-learn=1.4.2     
+  - pytorch=2.2.0
+  - torchvision=0.17.0
