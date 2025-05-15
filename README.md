@@ -14,7 +14,7 @@ conda activate IMLO-Coursework
 ## 2. Hyperparameter Tuning (Optional)
 Run a grid search across multiple configurations:
 ```bash
-python tune.py
+python3 tune.py
 ```
 This explores combinations of:
 
@@ -33,7 +33,7 @@ Results are saved to tuning_results.csv.
 
 Train the model using
 ```bash
-python train.py
+python3 train.py
 ```
 You can customize the training configuration in train.py:
 
@@ -62,7 +62,7 @@ Learning curves saved as training_metrics.png
 Evaluate the trained model using:
 
 ```bash
-python test.py
+python3 test.py
 ```
 
 This will:
