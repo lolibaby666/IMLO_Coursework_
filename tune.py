@@ -74,8 +74,8 @@ def main():
     }
     optimizers = ["adam", "sgd", "adamw"]
     losses = ["cross_entropy","focal"]
-    lrs = [0.001, 0.0005]
-    batch_sizes = [64, 128]
+    lrs = [0.001, 0.0005, 0.0001]
+    batch_sizes = [64, 128, 256]
 
     results = []
 

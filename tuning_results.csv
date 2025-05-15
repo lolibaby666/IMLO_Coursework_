@@ -1,1 +1,12 @@
-
+model,activation,optimizer,loss,lr,batch_size,val_accuracy,stop_epoch,duration_sec
+vgg16,relu,adam,cross_entropy,0.001,128,87.52,25,3249.77
+resnet,relu,adam,cross_entropy,0.001,128,83.28,9,11896.74
+vgg16,relu,adam,focal,0.001,128,84.92,20,2766.06
+resnet,relu,adam,focal,0.001,128,80.66,7,10168.34
+vgg16,leaky_relu,adam,cross_entropy,0.001,128,86.5,18,2514.61
+vgg16,relu,adamw,cross_entropy,0.001,128,87.16,29,3398.96
+vgg16,relu,sgd,cross_entropy,0.001,128,80.52,26,3238.0
+vgg16,relu,adam,cross_entropy,0.0005,128,85.44,15,2189.5
+vgg16,relu,adam,cross_entropy,0.0001,128,83.46,29,3284.39
+vgg16,relu,adam,cross_entropy,0.001,64,86.90,26,3458.71
+vgg16,relu,adam,cross_entropy,0.001,256,85.88,20,2936.15

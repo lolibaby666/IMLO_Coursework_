@@ -1,149 +1,218 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-from vgg16_model import VGG16
 import matplotlib.pyplot as plt
+import time
 from tqdm import tqdm
-import random
-import numpy as np
 
-# Set seeds for reproducibility
-seed = 42
-random.seed(seed)
-np.random.seed(seed)
-torch.manual_seed(seed)
+from utils import set_seed, get_device, get_train_val_loader, get_model, get_optimizer, get_loss
 
-# Step 1: Data Preprocessing
-transform = transforms.Compose([transforms.ToTensor()])
 
-# Load CIFAR-10 training and validation datasets
-data_root = './data'
-trainset = datasets.CIFAR10(root=data_root, train=True, download=True, transform=transform)
+def train_one_epoch(model, dataloader, criterion, optimizer, device):
+    """
+    Run one full training epoch.
+    Args:
+        model: The PyTorch model to train.
+        dataloader: Dataloader for the training set.
+        criterion: Loss function.
+        optimizer: Optimizer to update weights.
+        device: CPU or GPU device.
 
-# Split the training set into training and validation sets (90% for training, 10% for validation)
-trainset, validset = torch.utils.data.random_split(trainset, [45000, 5000])
+    Returns:
+        Average training loss for the epoch.
+    """
+    model.train() # Set model to training mode (enables dropout, batchnorm updates)
+    running_loss = 0.0
+    correct = 0
+    total = 0
 
-# Create DataLoader for training and validation datasets
-trainloader = DataLoader(trainset, batch_size=128, shuffle=True, num_workers=4)
-validloader = DataLoader(validset, batch_size=128, shuffle=False, num_workers=4)
+    for inputs, labels in tqdm(dataloader, desc="Training", leave=False):
+        inputs, labels = inputs.to(device), labels.to(device)
 
-# Step 2: Model Initialization (Using VGG16)
-model = VGG16(weight_decay=0.0001)
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
 
-# Step 3: Loss Function and Optimizer
-criterion = nn.CrossEntropyLoss()  # Cross-Entropy loss for classification
-optimizer = optim.Adam(model.parameters(), lr=0.001)  # Adam optimizer with learning rate of 0.001
+        # --- Accumulate total loss and accuracy stats ---
+        running_loss += loss.item() * inputs.size(0)
+        _, preds = torch.max(outputs, 1)
+        correct += (preds == labels).sum().item()
+        total += labels.size(0)
 
-# Step 4: Learning Rate Scheduler
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+    return running_loss / total, 100 * correct / total
 
-# Step 5: Training Loop
-device = torch.device("cpu")
-model.to(device)
 
-def train(model, trainloader, validloader, criterion, optimizer, scheduler, epochs=10):
-    model.train()  # Set the model to training mode
+def evaluate(model, dataloader, criterion, device):
+    """
+    Evaluate the model on validation data.
+
+    Args:
+        model: The trained model.
+        dataloader: Dataloader for validation.
+        criterion: Loss function.
+        device: CPU.
+
+    Returns:
+        Tuple of average validation loss and accuracy.
+    """
+    model.eval() # Set model to evaluation mode (disables dropout/batchnorm update)
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    with torch.no_grad():  # Turn off gradient computation for evaluation
+        for inputs, labels in dataloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+
+            # --- Accumulate total loss and accuracy stats ---
+            running_loss += loss.item() * inputs.size(0)
+            _, preds = torch.max(outputs, 1)
+            correct += (preds == labels).sum().item()
+            total += labels.size(0)
+
+    return running_loss / total, 100 * correct / total
+
+
+def train(model, trainloader, valloader, criterion, optimizer, device, config):
+    """
+    Full training loop with early stopping and metric tracking.
+
+    Args:
+        model: Model to train.
+        trainloader: Training DataLoader.
+        valloader: Validation DataLoader.
+        criterion: Loss function.
+        optimizer: Optimizer.
+        device: CPU/GPU.
+        config: Dict containing 'epochs', 'patience'.
+
+    Returns:
+        Tuple of (train_losses, val_losses, train_accs, val_accs)
+    """
+    best_acc = 0.0
+    no_improve = 0
+
     train_losses = []
     val_losses = []
     train_accuracies = []
     val_accuracies = []
-    
-    for epoch in range(epochs):
-        running_loss = 0.0
-        correct_train = 0
-        total_train = 0
-        
-        # Wrap the trainloader with tqdm for the progress bar
-        for i, (inputs, labels) in enumerate(tqdm(trainloader, desc=f'Epoch {epoch+1}/{epochs}', ncols=100, leave=False)):
-            inputs, labels = inputs.to(device), labels.to(device)
 
-            optimizer.zero_grad()  # Zero gradients before the backward pass
-            outputs = model(inputs)  # Forward pass
-            
-            loss = criterion(outputs, labels)  # Calculate loss
-            loss.backward()  # Backward pass (compute gradients)
-            optimizer.step()  # Update model weights
-            
-            running_loss += loss.item()
-            
-            # Calculate training accuracy
-            _, predicted = torch.max(outputs, 1)
-            total_train += labels.size(0)
-            correct_train += (predicted == labels).sum().item()
-        
-        epoch_loss = running_loss / len(trainloader)
-        train_losses.append(epoch_loss)
-        
-        train_accuracy = 100 * correct_train / total_train
-        train_accuracies.append(train_accuracy)
-        
-        # Validation phase
-        model.eval()  # Set the model to evaluation mode during validation
-        val_loss = 0.0
-        correct_val = 0
-        total_val = 0
-        with torch.no_grad():  # No need to compute gradients during validation
-            for inputs, labels in validloader:
-                inputs, labels = inputs.to(device), labels.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                val_loss += loss.item()
-                
-                # Calculate validation accuracy
-                _, predicted = torch.max(outputs, 1)
-                total_val += labels.size(0)
-                correct_val += (predicted == labels).sum().item()
-        
-        val_loss /= len(validloader)
-        val_accuracy = 100 * correct_val / total_val
+    for epoch in range(config["epochs"]):
+        print(f"\nEpoch {epoch+1}/{config['epochs']}")
+        start = time.time()
+
+        # --- Train and Validate ---
+        train_loss, train_acc = train_one_epoch(model, trainloader, criterion, optimizer, device)
+        val_loss, val_acc = evaluate(model, valloader, criterion, device)
+
+        # --- Logging ---
+        train_losses.append(train_loss)
         val_losses.append(val_loss)
-        val_accuracies.append(val_accuracy)
-        
-        # Print Epoch Results
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%, Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.2f}%")
-        
-        # Step the scheduler at the end of each epoch to reduce learning rate
-        scheduler.step()
-    
+        train_accuracies.append(train_acc)
+        val_accuracies.append(val_acc)
+
+        print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}%")
+
+        # --- Early stopping check ---
+        if val_acc > best_acc:
+            best_acc = val_acc
+            no_improve = 0
+        else:
+            no_improve += 1
+            if no_improve >= config["patience"]:
+                print(f"Early stopping at epoch {epoch+1}")
+                break
+
+        print(f"Time for epoch: {round(time.time() - start, 2)}s")
+
     return train_losses, val_losses, train_accuracies, val_accuracies
 
-# Step 6: Train the Model
-train_losses, val_losses, train_accuracies, val_accuracies = train(model, trainloader, validloader, criterion, optimizer, scheduler, epochs=100)
 
-# Step 7: Save the model after training
-model_save_path = './vgg16_cifar10.pth'
-torch.save(model.state_dict(), model_save_path)
-print(f"Model saved to {model_save_path}")
+def plot_metrics(train_losses, val_losses, train_accs, val_accs, save_path="training_plot.png"):
+    """
+    Plot and save training/validation loss and accuracy curves.
 
-# Step 8: Plot Training and Validation Loss Curves
-plt.figure(figsize=(12, 6))
+    Args:
+        train_losses: List of training losses.
+        val_losses: List of validation losses.
+        train_accs: List of training accuracies.
+        val_accs: List of validation accuracies.
+        save_path: Path to save the plot image.
+    """
+    plt.figure(figsize=(12, 5))
 
-# Training and Validation Loss curve in one graph
-plt.subplot(1, 2, 1)
-plt.plot(train_losses, label='Training Loss')
-plt.plot(val_losses, label='Validation Loss', color='orange')
-plt.xlabel('Epochs')
-plt.ylabel('Loss')
-plt.title('Training and Validation Loss')
-plt.legend()
+    # --- Loss Curve ---
+    plt.subplot(1, 2, 1)
+    plt.plot(train_losses, label='Train Loss')
+    plt.plot(val_losses, label='Val Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Loss Curve')
+    plt.legend()
 
-# Training and Validation Accuracy curve in one graph
-plt.subplot(1, 2, 2)
-plt.plot(train_accuracies, label='Training Accuracy')
-plt.plot(val_accuracies, label='Validation Accuracy', color='orange')
-plt.xlabel('Epochs')
-plt.ylabel('Accuracy (%)')
-plt.title('Training and Validation Accuracy')
-plt.legend()
+    # --- Accuracy Curve ---
+    plt.subplot(1, 2, 2)
+    plt.plot(train_accs, label='Train Acc')
+    plt.plot(val_accs, label='Val Acc')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy (%)')
+    plt.title('Accuracy Curve')
+    plt.legend()
 
-# Save the figure to a file
-plt.tight_layout()
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.show()
+    print(f"Training plots saved to {save_path}")
 
-# Save the entire figure
-plt.savefig('training_validation_plots.png', dpi=300)
-plt.show()
+def main():
+    """
+    Main training script for CIFAR-10 using VGG16 or ResNet.
+    """
+    set_seed()
+    device = get_device()
+
+    # --- Configurations ---
+    config = {
+        "model": "vgg16",             
+        "activation": nn.ReLU(),       
+        "loss": "cross_entropy",     
+        "optimizer": "adam",
+        "lr": 0.001,
+        "batch_size": 128,
+        "epochs": 100,
+        "patience": 30,
+        "save_path": "model.pth"
+    }
+
+    # --- Data ---
+    trainloader, valloader = get_train_val_loader(config["batch_size"])
+
+    # --- Model ---
+    model = get_model(config["model"], activation_fn=config["activation"])
+
+    # --- Loss and Optimizer ---
+    criterion = get_loss(config["loss"])
+    optimizer = get_optimizer(config["optimizer"], model.parameters(), config["lr"])
+
+    # --- Training --- 
+    total_start = time.time()
+    train_losses, val_losses, train_accs, val_accs = train(
+        model, trainloader, valloader, criterion, optimizer, device, config
+    )
+    total_end = time.time()
+    print(f"\n Total training time: {round(total_end - total_start, 2)} seconds")
+
+    # --- Save model ---
+    torch.save(model.state_dict(), config["save_path"])
+    print(f"Model saved to {config['save_path']}")
+
+    # --- Plot metrics ---
+    plot_metrics(train_losses, val_losses, train_accs, val_accs, save_path="training_metrics.png")
 
 
-
+if __name__ == "__main__":
+    main()

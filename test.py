@@ -2,131 +2,204 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
-from torch.utils.data import DataLoader
+import pandas as pd
 from torchvision import datasets, transforms
-from vgg16_model import VGG16  # Make sure this is your VGG16 class definition
+from torch.utils.data import DataLoader
+from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+from utils import get_device, get_model, get_loss, set_seed
 
-# Step 1: Set up the necessary configurations
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Step 2: Define transformations for test data (same as the one used during training)
-transform = transforms.Compose([
-    transforms.ToTensor()
-])
+def load_test_data(batch_size):
+    """
+    Load and return the CIFAR-10 test DataLoader and class names.
 
-# Step 3: Load the CIFAR-10 test dataset
-data_root = './data'  # Location of the CIFAR-10 dataset
-testset = datasets.CIFAR10(root=data_root, train=False, download=True, transform=transform)
+    Args:
+        batch_size (int): Batch size for test DataLoader.
 
-# Step 4: Create DataLoader for test dataset
-testloader = DataLoader(testset, batch_size=128, shuffle=False, num_workers=4)
+    Returns:
+        testloader (DataLoader): DataLoader for the CIFAR-10 test set.
+        class_names (list): List of class names in CIFAR-10.
+    """
+    transform = transforms.ToTensor()
+    testset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+    testloader = DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=0)
+    return testloader, testset.classes
 
-# Step 5: Load the trained model
-model = VGG16(weight_decay=0.0001)  # Ensure this matches the model architecture during training
-model.to(device)
 
-# Load the trained model weights (assuming the model was saved as 'vgg16_cifar10.pth')
-model_path = './vgg16_cifar10.pth'
-model.load_state_dict(torch.load(model_path))
-model.eval()  # Set the model to evaluation mode
+def evaluate_and_collect(model, testloader, criterion, device):
+    """
+    Evaluate the model on the test set and collect predictions and corresponding images.
 
-# Step 6: Define the loss function (same as used during training)
-criterion = nn.CrossEntropyLoss()
+    Args:
+        model (nn.Module): Trained model.
+        testloader (DataLoader): Test dataset loader.
+        criterion (Loss): Loss function used during evaluation.
+        device (torch.device): Target device (CPU).
 
-# Step 7: Evaluate the model on the test set
-def evaluate(model, testloader, criterion, device):
-    test_loss = 0.0
-    correct_test = 0
-    total_test = 0
+    Returns:
+        avg_loss (float): Average loss on test set.
+        accuracy (float): Overall test accuracy (%).
+        all_preds (np.array): Predicted labels.
+        all_labels (np.array): True labels.
+        all_images (list): Corresponding image tensors.
+    """
+    model.eval()
+    total_loss = 0.0
+    correct = 0
+    total = 0
+    all_preds, all_labels, all_images = [], [], []
 
-    with torch.no_grad():  # No need to compute gradients during testing
+    with torch.no_grad():
         for inputs, labels in testloader:
             inputs, labels = inputs.to(device), labels.to(device)
-
-            # Forward pass
             outputs = model(inputs)
             loss = criterion(outputs, labels)
-            test_loss += loss.item()
 
-            # Calculate accuracy
-            _, predicted = torch.max(outputs, 1)
-            total_test += labels.size(0)
-            correct_test += (predicted == labels).sum().item()
+            total_loss += loss.item() * inputs.size(0)
+            _, preds = torch.max(outputs, 1)
 
-    # Calculate the average loss and accuracy
-    test_loss /= len(testloader)
-    test_accuracy = 100 * correct_test / total_test
+            correct += (preds == labels).sum().item()
+            total += labels.size(0)
 
-    return test_loss, test_accuracy
+            # Store predictions and inputs for visualization
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+            all_images.extend(inputs.cpu())  # Keep image tensors for visualization
 
-# Step 8: Run the evaluation
-test_loss, test_accuracy = evaluate(model, testloader, criterion, device)
+    avg_loss = total_loss / total
+    accuracy = 100 * correct / total
+    return avg_loss, accuracy, np.array(all_preds), np.array(all_labels), all_images
 
-# Step 9: Print the test results
-print(f"Test Loss: {test_loss:.4f}")
-print(f"Test Accuracy: {test_accuracy:.2f}%")
 
-# Step 10: Visualization of Correct and Incorrect Predictions
-def visualize_predictions(model, testloader, num_samples=10):
-    model.eval()  # Set model to evaluation mode
-    data_iter = iter(testloader)
-    
-    # Get a batch of test data
-    inputs, labels = next(data_iter)
-    inputs, labels = inputs.to(device), labels.to(device)
+def save_classification_report(y_true, y_pred, class_names, filename="classification_report.csv"):
+    """
+    Save classification metrics (precision, recall, F1-score) to a CSV.
 
-    # Predict the outputs
-    outputs = model(inputs)
-    _, predicted = torch.max(outputs, 1)
+    Args:
+        y_true (array): Ground-truth labels.
+        y_pred (array): Predicted labels.
+        class_names (list): List of class names.
+        filename (str): Output CSV filename.
+    """
+    report_dict = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
+    df = pd.DataFrame(report_dict).transpose()
+    df.to_csv(filename, float_format="%.4f")
+    print(f"Classification report saved to {filename}")
 
-    # Create lists for correct and incorrect predictions
-    correct_samples = []
-    incorrect_samples = []
 
-    for i in range(len(labels)):
-        true_label = testset.classes[labels[i]]
-        pred_label = testset.classes[predicted[i]]
-        if true_label == pred_label:
-            correct_samples.append((inputs[i], true_label, pred_label))
-        else:
-            incorrect_samples.append((inputs[i], true_label, pred_label))
-        
-        # Stop early if we have enough correct/incorrect samples
-        if len(correct_samples) >= num_samples and len(incorrect_samples) >= num_samples:
+def plot_prediction_samples(images, labels, preds, class_names, title, filename, num_samples=10):
+    """
+    Plot and save a grid of correct or incorrect predictions.
+
+    Args:
+        images (list): List of image tensors.
+        labels (list): True label indices.
+        preds (list): Predicted label indices.
+        class_names (list): List of class names.
+        title (str): Title for the plot.
+        filename (str): File path to save the image.
+        num_samples (int): Number of images to visualize.
+    """
+    fig = plt.figure(figsize=(12, 5))
+    shown = 0
+    for i in range(len(images)):
+        if shown >= num_samples:
             break
+        if class_names[labels[i]] == class_names[preds[i]] and "Correct" in title:
+            pass
+        elif class_names[labels[i]] != class_names[preds[i]] and "Incorrect" in title:
+            pass
+        else:
+            continue
 
-    # Visualizing Correct Predictions
-    fig = plt.figure(figsize=(12, 6))
-    for i in range(min(num_samples, len(correct_samples))):
-        ax = fig.add_subplot(2, 5, i+1)
-        img = correct_samples[i][0].cpu().numpy().transpose(1, 2, 0)
+        ax = fig.add_subplot(2, 5, shown + 1)
+        img = images[i].numpy().transpose(1, 2, 0)
         ax.imshow(np.clip(img, 0, 1))
-        
-        true_label = correct_samples[i][1]
-        pred_label = correct_samples[i][2]
-        ax.set_title(f"True: {true_label}\nPred: {pred_label}")
+        ax.set_title(f"T: {class_names[labels[i]]}\nP: {class_names[preds[i]]}")
         ax.axis('off')
+        shown += 1
 
-    # Save the figure with correct predictions
     plt.tight_layout()
-    plt.savefig('correct_predictions.png', dpi=300)
+    plt.savefig(filename, dpi=300)
+    plt.close()
+    print(f"{title} saved to {filename}")
 
-    # Visualizing Incorrect Predictions
-    fig = plt.figure(figsize=(12, 6))
-    for i in range(min(num_samples, len(incorrect_samples))):
-        ax = fig.add_subplot(2, 5, i+1)
-        img = incorrect_samples[i][0].cpu().numpy().transpose(1, 2, 0)
-        ax.imshow(np.clip(img, 0, 1))
-        
-        true_label = incorrect_samples[i][1]
-        pred_label = incorrect_samples[i][2]
-        ax.set_title(f"True: {true_label}\nPred: {pred_label}")
-        ax.axis('off')
+def plot_confusion_matrix(y_true, y_pred, class_names, filename="confusion_matrix.png"):
+    """
+    Generate and save a confusion matrix plot.
 
-    # Save the figure with incorrect predictions
+    Args:
+        y_true (array): Ground-truth labels.
+        y_pred (array): Predicted labels.
+        class_names (list): Class names to label axes.
+        filename (str): Output image filename.
+    """
+    cm = confusion_matrix(y_true, y_pred)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+    fig, ax = plt.subplots(figsize=(10, 8))
+    disp.plot(xticks_rotation=90, cmap='Blues', ax=ax)  # <-- colorbar=True by default
+    plt.title("Confusion Matrix")
     plt.tight_layout()
-    plt.savefig('incorrect_predictions.png', dpi=300)
-    plt.show()
+    plt.savefig(filename, dpi=300)
+    plt.close()
+    print(f"Confusion matrix saved to {filename}")
 
-# Step 11: Run the visualization function
-visualize_predictions(model, testloader, num_samples=10)
+
+
+# ----------------------------
+# Main Testing Logic
+# ----------------------------
+
+def main():
+    """
+    Main testing routine:
+    - Loads test data and model
+    - Evaluates test set
+    - Saves metrics (loss, accuracy, classification report, confusion matrix)
+    - Saves example visualizations of correct/incorrect predictions
+    """
+    set_seed()
+    device = get_device()
+
+    # --- Configuration dictionary ---
+    config = {
+        "model": "vgg16",
+        "activation": nn.ReLU(),
+        "loss": "cross_entropy",
+        "batch_size": 128,
+        "model_path": "model.pth",
+        "num_visualize": 10,
+        "prefix": "test"
+    }
+
+    # --- Load Data ---
+    testloader, class_names = load_test_data(config["batch_size"])
+
+    # --- Load Model ---
+    model = get_model(config["model"], activation_fn=config["activation"])
+    model.load_state_dict(torch.load(config["model_path"], map_location=device))
+    model.to(device)
+    criterion = get_loss(config["loss"])
+    print(f"Loaded model from {config['model_path']}")
+
+    # --- Evaluate ---
+    test_loss, test_acc, y_pred, y_true, images = evaluate_and_collect(model, testloader, criterion, device)
+    print(f"\nTest Loss: {test_loss:.4f} | Test Accuracy: {test_acc:.2f}%")
+
+    # --- Detailed Classification Report ---
+    print("\nDetailed Classification Report:\n")
+    print(classification_report(y_true, y_pred, target_names=class_names, digits=4))
+    save_classification_report(y_true, y_pred, class_names, filename=f"{config['prefix']}_report.csv")
+
+    # --- Confusion Matrix ---
+    plot_confusion_matrix(y_true, y_pred, class_names, filename=f"{config['prefix']}_confusion_matrix.png")
+
+    # --- Prediction Visualization ---
+    plot_prediction_samples(images, y_true, y_pred, class_names,
+                            "Correct Predictions", f"{config['prefix']}_correct.png", num_samples=config["num_visualize"])
+    plot_prediction_samples(images, y_true, y_pred, class_names,
+                            "Incorrect Predictions", f"{config['prefix']}_incorrect.png", num_samples=config["num_visualize"])
+
+
+if __name__ == "__main__":
+    main()
